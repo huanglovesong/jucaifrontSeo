@@ -1,0 +1,131 @@
+variables:
+  DOCKERFILE_PATH: ./Dockerfile
+  CODE_TYPE: front
+  CONFIG_PATH: /configs/configs.$CI_ENVIRONMENT_NAME.js
+stages:
+- sonar
+- deploy
+
+sonar:
+  stage: sonar
+  image: sonarsource/sonar-scanner-cli:latest
+  script:
+    - sonar-scanner  -Dsonar.login=${SONAR_SECRET} -Dsonar.host.url=${SONAR_HOST} -Dsonar.projectKey=${CI_PROJECT_NAME} # sonarqube中项目的标识
+  allow_failure: true
+  only:
+    - develop
+  except:
+    - tags
+
+
+
+
+ ## docker打包
+.deploy-docker: &deploy-docker
+  stage: deploy
+  image: registry.cn-hangzhou.aliyuncs.com/k8s-ich/deployer:latest
+  script:
+    - docker login -u ${DOCKER_REPOSTORY_USERNAME} -p ${DOCKER_REPOSTORY_PASSPORD} ${DOCKER_REPOSTORY_ADDRESSURL}
+    - docker build -f ${DOCKERFILE_PATH} -t ${IMAGE_URL} . 
+    - docker tag  ${IMAGE_URL} ${IMAGE_URL}
+    - docker push ${IMAGE_URL} 
+   
+
+## 本地环境变量
+
+.local-variables: &local-variables
+  variables:
+    DOCKER_REPOSTORY_USERNAME: $DEV_REGISTRY_USERNAME
+    DOCKER_REPOSTORY_PASSPORD: $DEV_REGISTRY_PASSWORD
+    DOCKER_REPOSTORY_ADDRESSURL: $DEV_REGISTRY
+    IMAGE_URL: $DEV_REGISTRY/${CI_PROJECT_NAME}:$CI_ENVIRONMENT_NAME-$CI_PIPELINE_ID
+
+## 远程环境变量
+
+.remote-variables: &remote-variables
+  variables:
+    DOCKER_REPOSTORY_USERNAME: $PROD_REGISTRY_USERNAME
+    DOCKER_REPOSTORY_PASSPORD: $PROD_REGISTRY_PASSWORD
+    DOCKER_REPOSTORY_ADDRESSURL: $PROD_REGISTRY_ENT
+    IMAGE_URL: $PROD_REGISTRY_REPO_ENT/${CI_PROJECT_NAME}:$CI_ENVIRONMENT_NAME-$CI_PIPELINE_ID
+
+
+
+################## 部署到线上集群 ##################
+
+## 开发环境
+deploy-dev:
+  <<: *deploy-docker
+  <<: *local-variables
+  only:
+    - develop
+  except:
+    - tags
+  environment:
+    name: dev
+  allow_failure: false
+
+
+## 测试环境
+deploy-test:
+  <<: *deploy-docker
+  <<: *local-variables
+  only:
+    - /^release\/[\S]+$/
+  except:
+    - tags
+  environment:
+    name: test
+  allow_failure: false
+
+
+## 压测环境
+deploy-perf:
+  <<: *deploy-docker
+  <<: *local-variables
+  only:
+    - /^yace\/[\S]+$/
+  except:
+    - tags
+  environment:
+    name: perf
+  allow_failure: false
+
+
+## 集成测试环境
+deploy-beta:
+  <<: *deploy-docker
+  <<: *remote-variables
+  only:
+    - /^beta\/[\S]+$/
+  except:
+    - tags
+  environment:
+    name: it
+  allow_failure: false
+
+
+## 预发布环境
+deploy-pre:
+  <<: *deploy-docker
+  <<: *remote-variables
+  only:
+    - master
+  except:
+    - tags
+  environment:
+    name: pre
+  allow_failure: false
+
+
+## 生产环境
+deploy-prod:
+  <<: *deploy-docker
+  <<: *remote-variables
+  only:
+    - /^rel-[\S]+$/
+  except:
+    - branches
+  environment:
+    name: prod
+  allow_failure: false
